@@ -11,6 +11,7 @@ from streamlit_autorefresh import st_autorefresh
 JST = timezone(timedelta(hours=+9), 'JST')
 
 DATA_DIR = "data"
+BACKUP_DIR = os.path.join(DATA_DIR, "backup")
 INVENTORY_FILE = os.path.join(DATA_DIR, "inventory.csv")
 HISTORY_FILE = os.path.join(DATA_DIR, "history.csv")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
@@ -21,6 +22,7 @@ TERMINAL_INVENTORY_FILE = os.path.join(DATA_DIR, "terminal_inventory_wide.csv")
 LOCK_FILE = os.path.join(DATA_DIR, "app.lock")
 
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(BACKUP_DIR, exist_ok=True)
 
 DEFAULT_TERMINALS = ["本部", "レジ1", "レジ2"]
 
@@ -139,25 +141,60 @@ def load_data(use_lock=True):
 
 def save_data(inv, hist, master_prices, ticket_counter, start_inventory_set, start_inv, term_inv, use_lock=True):
     def _save_core():
-        inv.to_csv(INVENTORY_FILE, index=False, encoding="utf-8-sig")
+        # 1. 保存の安全性：.tmpファイルに保存してからアトミックに置き換えるヘルパー
+        def safe_save_csv(df, filepath, columns=None):
+            df_to_save = df.copy()
+            if columns:
+                for col in columns:
+                    if col not in df_to_save.columns:
+                        df_to_save[col] = ""
+                df_to_save = df_to_save[columns]
+            tmp_path = filepath + ".tmp"
+            df_to_save.to_csv(tmp_path, index=False, encoding="utf-8-sig")
+            os.replace(tmp_path, filepath)
+
+        def safe_save_json(data, filepath):
+            tmp_path = filepath + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, filepath)
+
+        # 各ファイルの安全な保存実行
+        safe_save_csv(inv, INVENTORY_FILE)
         
         hist_columns = ['日時', '端末', '商品名', '数量', '合計金額', '整理券番号', '受け渡し済']
-        hist_to_save = hist.copy()
-        for col in hist_columns:
-            if col not in hist_to_save.columns:
-                hist_to_save[col] = ""
-        hist_to_save = hist_to_save[hist_columns]
-        hist_to_save.to_csv(HISTORY_FILE, index=False, encoding="utf-8-sig")
+        safe_save_csv(hist, HISTORY_FILE, hist_columns)
         
         settings = {
             "ticket_counter": ticket_counter,
             "master_prices": master_prices,
             "start_inventory_set": start_inventory_set
         }
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
-        start_inv.to_csv(START_INVENTORY_FILE, index=False, encoding="utf-8-sig")
-        term_inv.to_csv(TERMINAL_INVENTORY_FILE, index=False, encoding="utf-8-sig")
+        safe_save_json(settings, SETTINGS_FILE)
+        
+        safe_save_csv(start_inv, START_INVENTORY_FILE)
+        safe_save_csv(term_inv, TERMINAL_INVENTORY_FILE)
+
+        # 2. 自動バックアップ：data/backup/ へ履歴・在庫を安全保存にする
+        timestamp = datetime.now(JST).strftime('%Y%m%d_%H%M%S')
+        backup_inv_path = os.path.join(BACKUP_DIR, f"inventory_{timestamp}.csv")
+        backup_hist_path = os.path.join(BACKUP_DIR, f"history_{timestamp}.csv")
+        
+        safe_save_csv(inv, backup_inv_path)
+        safe_save_csv(hist, backup_hist_path, hist_columns)
+
+        # バックアップファイルが肥大化しないよう、古いバックアップ（直近20件超）を自動整理
+        try:
+            for prefix, ext in [("history_", ".csv"), ("inventory_", ".csv")]:
+                files = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith(prefix) and f.endswith(ext)])
+                if len(files) > 20:
+                    for old_f in files[:-20]:
+                        try:
+                            os.remove(os.path.join(BACKUP_DIR, old_f))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
 
     if use_lock:
         with FileLock(LOCK_FILE):
@@ -194,9 +231,11 @@ st.title("簡易レジ＆在庫管理アプリ")
 
 # --- サイドバー設定 ---
 st.sidebar.header("⚙️ システム・更新設定")
-enable_auto_refresh = st.sidebar.checkbox("5秒自動更新を有効にする", value=True)
+st.sidebar.info("⚠️ 編集中（在庫管理タブなど）は自動更新をオフにしてください。入力内容がリセットされる場合があります。")
+# 10秒更新をデフォルトで有効(True)に変更
+enable_auto_refresh = st.sidebar.checkbox("10秒自動更新を有効にする（閲覧用）", value=True)
 if enable_auto_refresh:
-    st_autorefresh(interval=5000, limit=None, key="realtime_sync_refresh")
+    st_autorefresh(interval=10000, limit=None, key="realtime_sync_refresh")
 
 st.sidebar.header("🖥️ 操作端末の選択")
 current_terminal = st.sidebar.selectbox("現在の端末", DEFAULT_TERMINALS, key="current_terminal")
@@ -318,7 +357,6 @@ with tab1:
     
     now_str = datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
 
-    # 端末が「レジ1」または「レジ2」の場合はボタン配置や有効性を変更
     if current_terminal in ["レジ1", "レジ2"]:
         col_btn1, col_btn3 = st.columns(2)
         with col_btn1:
@@ -615,7 +653,6 @@ with tab5:
         if st.button("現在の在庫数を「営業開始時在庫」として確定する"):
             with FileLock(LOCK_FILE):
                 inv_l, hist_l, mp_l, _, term_inv_l, tc_l, _ = load_data(use_lock=False)
-                inv_l.to_csv(START_INVENTORY_FILE, index=False, encoding="utf-8-sig")
                 save_data(inv_l, hist_l, mp_l, tc_l, True, inv_l, term_inv_l, use_lock=False)
                 st.session_state.start_inventory = inv_l.copy()
                 st.session_state.start_inventory_set = True
