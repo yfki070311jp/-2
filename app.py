@@ -165,14 +165,13 @@ def save_data(inv, hist, master_prices, ticket_counter, start_inventory_set, sta
     else:
         _save_core()
 
-# ★ 変更：チュロス（チョコ）を394、チュロス（シナモン）を194に設定
 default_inventory = pd.DataFrame([
-    {'商品名': 'チュロス（チョコ）', '価格': 200, '在庫数': 394},
-    {'商品名': 'チュロス（シナモン）', '価格': 200, '在庫数': 194},
-    {'商品名': 'シュー（いちご）', '価格': 100, '在庫数': 180},
-    {'商品名': 'シュー（バニラ）', '価格': 100, '在庫数': 180},
-    {'商品名': 'シュー（抹茶）', '価格': 100, '在庫数': 90},
-    {'商品名': 'シュー（チョコ）', '価格': 100, '在庫数': 90}
+    {'商品名': 'チュロス（チョコ）', '価格': 200, '在庫数': 368},
+    {'商品名': 'チュロス（シナモン）', '価格': 200, '在庫数': 180},
+    {'商品名': 'シュー（いちご）', '価格': 100, '在庫数': 168},
+    {'商品名': 'シュー（バニラ）', '価格': 100, '在庫数': 168},
+    {'商品名': 'シュー（抹茶）', '価格': 100, '在庫数': 82},
+    {'商品名': 'シュー（チョコ）', '価格': 100, '在庫数': 82}
 ])
 
 default_history = pd.DataFrame(columns=['日時', '端末', '商品名', '数量', '合計金額', '整理券番号', '受け渡し済'])
@@ -195,7 +194,7 @@ st.title("簡易レジ＆在庫管理アプリ")
 
 # --- サイドバー設定 ---
 st.sidebar.header("⚙️ システム・更新設定")
-enable_auto_refresh = st.sidebar.checkbox("5秒自動更新を有効にする", value=False)
+enable_auto_refresh = st.sidebar.checkbox("5秒自動更新を有効にする", value=True)
 if enable_auto_refresh:
     st_autorefresh(interval=5000, limit=None, key="realtime_sync_refresh")
 
@@ -319,99 +318,149 @@ with tab1:
     
     now_str = datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
 
-    col_btn1, col_btn2, col_btn3 = st.columns(3)
-
-    with col_btn1:
-        if st.button("整理券なしで会計", disabled=not is_admin):
-            if not any(q > 0 for q in st.session_state.temp_cart.values()):
-                st.error("商品が選択されていません。")
-            else:
-                with FileLock(LOCK_FILE):
-                    inv_latest, hist_latest, mp_latest, start_inv_latest, term_inv_latest, tc_latest, sis_latest = load_data(use_lock=False)
-                    
-                    stock_ok = True
-                    for name, qty in st.session_state.temp_cart.items():
-                        if qty > 0:
-                            t_match = term_inv_latest[term_inv_latest['商品名'] == name]
-                            curr_term_stock = safe_int(t_match.iloc[0][current_terminal]) if not t_match.empty and current_terminal in t_match.columns else 0
-                            if qty > curr_term_stock:
-                                st.error(f"⚠️ 「{name}」の{current_terminal}の在庫が不足しました（在庫: {curr_term_stock}個 / 注文数: {qty}個）。")
-                                stock_ok = False
-                                break
-                    
-                    if stock_ok:
+    # 端末が「レジ1」または「レジ2」の場合はボタン配置や有効性を変更
+    if current_terminal in ["レジ1", "レジ2"]:
+        col_btn1, col_btn3 = st.columns(2)
+        with col_btn1:
+            if st.button("整理券なしで会計", disabled=not is_admin, use_container_width=True):
+                if not any(q > 0 for q in st.session_state.temp_cart.values()):
+                    st.error("商品が選択されていません。")
+                else:
+                    with FileLock(LOCK_FILE):
+                        inv_latest, hist_latest, mp_latest, start_inv_latest, term_inv_latest, tc_latest, sis_latest = load_data(use_lock=False)
+                        
+                        stock_ok = True
                         for name, qty in st.session_state.temp_cart.items():
                             if qty > 0:
-                                match = inv_latest['商品名'] == name
-                                idx = inv_latest.index[match][0]
-                                price = safe_int(inv_latest.at[idx, '価格'])
-                                total_stk = safe_int(inv_latest.at[idx, '在庫数'])
-                                inv_latest.at[idx, '在庫数'] = max(0, total_stk - qty)
-
-                                t_idx = term_inv_latest[term_inv_latest['商品名'] == name].index[0]
-                                term_stk = safe_int(term_inv_latest.at[t_idx, current_terminal])
-                                term_inv_latest.at[t_idx, current_terminal] = max(0, term_stk - qty)
-
-                                new_hist = pd.DataFrame([{'日時': now_str, '端末': current_terminal, '商品名': name, '数量': qty, '合計金額': price * qty, '整理券番号': "なし", '受け渡し済': True}])
-                                hist_latest = pd.concat([hist_latest, new_hist], ignore_index=True)
+                                t_match = term_inv_latest[term_inv_latest['商品名'] == name]
+                                curr_term_stock = safe_int(t_match.iloc[0][current_terminal]) if not t_match.empty and current_terminal in t_match.columns else 0
+                                if qty > curr_term_stock:
+                                    st.error(f"⚠️ 「{name}」の{current_terminal}の在庫が不足しました（在庫: {curr_term_stock}個 / 注文数: {qty}個）。")
+                                    stock_ok = False
+                                    break
                         
-                        save_data(inv_latest, hist_latest, mp_latest, tc_latest, sis_latest, start_inv_latest, term_inv_latest, use_lock=False)
-                        st.session_state.inventory = inv_latest
-                        st.session_state.history = hist_latest
-                        st.session_state.terminal_inventory = term_inv_latest
-                        st.session_state.temp_cart = {name: 0 for name in current_product_names}
-                        st.success("会計完了！")
-                        st.rerun()
+                        if stock_ok:
+                            for name, qty in st.session_state.temp_cart.items():
+                                if qty > 0:
+                                    match = inv_latest['商品名'] == name
+                                    idx = inv_latest.index[match][0]
+                                    price = safe_int(inv_latest.at[idx, '価格'])
+                                    total_stk = safe_int(inv_latest.at[idx, '在庫数'])
+                                    inv_latest.at[idx, '在庫数'] = max(0, total_stk - qty)
 
-    with col_btn2:
-        if st.button("整理券を発行して会計", disabled=not is_admin):
-            if not any(q > 0 for q in st.session_state.temp_cart.values()):
-                st.error("商品が選択されていません。")
-            else:
-                with FileLock(LOCK_FILE):
-                    inv_latest, hist_latest, mp_latest, start_inv_latest, term_inv_latest, tc_latest, sis_latest = load_data(use_lock=False)
-                    
-                    stock_ok = True
-                    for name, qty in st.session_state.temp_cart.items():
-                        if qty > 0:
-                            t_match = term_inv_latest[term_inv_latest['商品名'] == name]
-                            curr_term_stock = safe_int(t_match.iloc[0][current_terminal]) if not t_match.empty and current_terminal in t_match.columns else 0
-                            if qty > curr_term_stock:
-                                st.error(f"⚠️ 「{name}」の{current_terminal}の在庫が不足しました（在庫: {curr_term_stock}個 / 注文数: {qty}個）。")
-                                stock_ok = False
-                                break
-                    
-                    if stock_ok:
-                        ticket_num = tc_latest
-                        tc_latest += 1
+                                    t_idx = term_inv_latest[term_inv_latest['商品名'] == name].index[0]
+                                    term_stk = safe_int(term_inv_latest.at[t_idx, current_terminal])
+                                    term_inv_latest.at[t_idx, current_terminal] = max(0, term_stk - qty)
+
+                                    new_hist = pd.DataFrame([{'日時': now_str, '端末': current_terminal, '商品名': name, '数量': qty, '合計金額': price * qty, '整理券番号': "なし", '受け渡し済': True}])
+                                    hist_latest = pd.concat([hist_latest, new_hist], ignore_index=True)
+                            
+                            save_data(inv_latest, hist_latest, mp_latest, tc_latest, sis_latest, start_inv_latest, term_inv_latest, use_lock=False)
+                            st.session_state.inventory = inv_latest
+                            st.session_state.history = hist_latest
+                            st.session_state.terminal_inventory = term_inv_latest
+                            st.session_state.temp_cart = {name: 0 for name in current_product_names}
+                            st.success("会計完了！")
+                            st.rerun()
+
+        with col_btn3:
+            if st.button("かごを空にする", disabled=not is_admin, use_container_width=True):
+                st.session_state.temp_cart = {name: 0 for name in current_product_names}
+                st.rerun()
+    else:
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
+
+        with col_btn1:
+            if st.button("整理券なしで会計", disabled=not is_admin):
+                if not any(q > 0 for q in st.session_state.temp_cart.values()):
+                    st.error("商品が選択されていません。")
+                else:
+                    with FileLock(LOCK_FILE):
+                        inv_latest, hist_latest, mp_latest, start_inv_latest, term_inv_latest, tc_latest, sis_latest = load_data(use_lock=False)
+                        
+                        stock_ok = True
                         for name, qty in st.session_state.temp_cart.items():
                             if qty > 0:
-                                match = inv_latest['商品名'] == name
-                                idx = inv_latest.index[match][0]
-                                price = safe_int(inv_latest.at[idx, '価格'])
-                                total_stk = safe_int(inv_latest.at[idx, '在庫数'])
-                                inv_latest.at[idx, '在庫数'] = max(0, total_stk - qty)
-
-                                t_idx = term_inv_latest[term_inv_latest['商品名'] == name].index[0]
-                                term_stk = safe_int(term_inv_latest.at[t_idx, current_terminal])
-                                term_inv_latest.at[t_idx, current_terminal] = max(0, term_stk - qty)
-
-                                new_hist = pd.DataFrame([{'日時': now_str, '端末': current_terminal, '商品名': name, '数量': qty, '合計金額': price * qty, '整理券番号': ticket_num, '受け渡し済': False}])
-                                hist_latest = pd.concat([hist_latest, new_hist], ignore_index=True)
+                                t_match = term_inv_latest[term_inv_latest['商品名'] == name]
+                                curr_term_stock = safe_int(t_match.iloc[0][current_terminal]) if not t_match.empty and current_terminal in t_match.columns else 0
+                                if qty > curr_term_stock:
+                                    st.error(f"⚠️ 「{name}」の{current_terminal}の在庫が不足しました（在庫: {curr_term_stock}個 / 注文数: {qty}個）。")
+                                    stock_ok = False
+                                    break
                         
-                        save_data(inv_latest, hist_latest, mp_latest, tc_latest, sis_latest, start_inv_latest, term_inv_latest, use_lock=False)
-                        st.session_state.inventory = inv_latest
-                        st.session_state.history = hist_latest
-                        st.session_state.terminal_inventory = term_inv_latest
-                        st.session_state.ticket_counter = tc_latest
-                        st.session_state.temp_cart = {name: 0 for name in current_product_names}
-                        st.success(f"会計完了！整理券番号: **{ticket_num}**")
-                        st.rerun()
+                        if stock_ok:
+                            for name, qty in st.session_state.temp_cart.items():
+                                if qty > 0:
+                                    match = inv_latest['商品名'] == name
+                                    idx = inv_latest.index[match][0]
+                                    price = safe_int(inv_latest.at[idx, '価格'])
+                                    total_stk = safe_int(inv_latest.at[idx, '在庫数'])
+                                    inv_latest.at[idx, '在庫数'] = max(0, total_stk - qty)
 
-    with col_btn3:
-        if st.button("かごを空にする", disabled=not is_admin):
-            st.session_state.temp_cart = {name: 0 for name in current_product_names}
-            st.rerun()
+                                    t_idx = term_inv_latest[term_inv_latest['商品名'] == name].index[0]
+                                    term_stk = safe_int(term_inv_latest.at[t_idx, current_terminal])
+                                    term_inv_latest.at[t_idx, current_terminal] = max(0, term_stk - qty)
+
+                                    new_hist = pd.DataFrame([{'日時': now_str, '端末': current_terminal, '商品名': name, '数量': qty, '合計金額': price * qty, '整理券番号': "なし", '受け渡し済': True}])
+                                    hist_latest = pd.concat([hist_latest, new_hist], ignore_index=True)
+                            
+                            save_data(inv_latest, hist_latest, mp_latest, tc_latest, sis_latest, start_inv_latest, term_inv_latest, use_lock=False)
+                            st.session_state.inventory = inv_latest
+                            st.session_state.history = hist_latest
+                            st.session_state.terminal_inventory = term_inv_latest
+                            st.session_state.temp_cart = {name: 0 for name in current_product_names}
+                            st.success("会計完了！")
+                            st.rerun()
+
+        with col_btn2:
+            if st.button("整理券を発行して会計", disabled=not is_admin):
+                if not any(q > 0 for q in st.session_state.temp_cart.values()):
+                    st.error("商品が選択されていません。")
+                else:
+                    with FileLock(LOCK_FILE):
+                        inv_latest, hist_latest, mp_latest, start_inv_latest, term_inv_latest, tc_latest, sis_latest = load_data(use_lock=False)
+                        
+                        stock_ok = True
+                        for name, qty in st.session_state.temp_cart.items():
+                            if qty > 0:
+                                t_match = term_inv_latest[term_inv_latest['商品名'] == name]
+                                curr_term_stock = safe_int(t_match.iloc[0][current_terminal]) if not t_match.empty and current_terminal in t_match.columns else 0
+                                if qty > curr_term_stock:
+                                    st.error(f"⚠️ 「{name}」の{current_terminal}の在庫が不足しました（在庫: {curr_term_stock}個 / 注文数: {qty}個）。")
+                                    stock_ok = False
+                                    break
+                        
+                        if stock_ok:
+                            ticket_num = tc_latest
+                            tc_latest += 1
+                            for name, qty in st.session_state.temp_cart.items():
+                                if qty > 0:
+                                    match = inv_latest['商品名'] == name
+                                    idx = inv_latest.index[match][0]
+                                    price = safe_int(inv_latest.at[idx, '価格'])
+                                    total_stk = safe_int(inv_latest.at[idx, '在庫数'])
+                                    inv_latest.at[idx, '在庫数'] = max(0, total_stk - qty)
+
+                                    t_idx = term_inv_latest[term_inv_latest['商品名'] == name].index[0]
+                                    term_stk = safe_int(term_inv_latest.at[t_idx, current_terminal])
+                                    term_inv_latest.at[t_idx, current_terminal] = max(0, term_stk - qty)
+
+                                    new_hist = pd.DataFrame([{'日時': now_str, '端末': current_terminal, '商品名': name, '数量': qty, '合計金額': price * qty, '整理券番号': ticket_num, '受け渡し済': False}])
+                                    hist_latest = pd.concat([hist_latest, new_hist], ignore_index=True)
+                            
+                            save_data(inv_latest, hist_latest, mp_latest, tc_latest, sis_latest, start_inv_latest, term_inv_latest, use_lock=False)
+                            st.session_state.inventory = inv_latest
+                            st.session_state.history = hist_latest
+                            st.session_state.terminal_inventory = term_inv_latest
+                            st.session_state.ticket_counter = tc_latest
+                            st.session_state.temp_cart = {name: 0 for name in current_product_names}
+                            st.success(f"会計完了！整理券番号: **{ticket_num}**")
+                            st.rerun()
+
+        with col_btn3:
+            if st.button("かごを空にする", disabled=not is_admin):
+                st.session_state.temp_cart = {name: 0 for name in current_product_names}
+                st.rerun()
 
 # --- Tab 2: 在庫管理 ---
 with tab2:
