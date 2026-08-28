@@ -165,9 +165,10 @@ def save_data(inv, hist, master_prices, ticket_counter, start_inventory_set, sta
     else:
         _save_core()
 
+# ★ 変更：チュロス（チョコ）を394、チュロス（シナモン）を194に設定
 default_inventory = pd.DataFrame([
-    {'商品名': 'チュロス（チョコ）', '価格': 200, '在庫数': 400},
-    {'商品名': 'チュロス（シナモン）', '価格': 200, '在庫数': 200},
+    {'商品名': 'チュロス（チョコ）', '価格': 200, '在庫数': 394},
+    {'商品名': 'チュロス（シナモン）', '価格': 200, '在庫数': 194},
     {'商品名': 'シュー（いちご）', '価格': 100, '在庫数': 180},
     {'商品名': 'シュー（バニラ）', '価格': 100, '在庫数': 180},
     {'商品名': 'シュー（抹茶）', '価格': 100, '在庫数': 90},
@@ -242,7 +243,6 @@ if not st.session_state.history.empty:
 
 total_minutes = max(1, int((e_dt - s_dt).total_seconds() / 60))
 
-# ★ 修正：elapsed_weightを0.0で初期化
 elapsed_weight = 0.0
 total_weight = 0.0
 
@@ -582,7 +582,6 @@ with tab5:
         sold = elapsed_sales.get(p_name, 0)
         manual_loss = max(0, (start_stock - sold) - current_stock)
         
-        # ★ 修正：0除算を防ぐ安全な分岐処理を適用
         if elapsed_weight > 0:
             estimated_sales = (sold / elapsed_weight) * total_weight
         else:
@@ -618,7 +617,6 @@ with tab6:
         start_stock = safe_int(start_val.values[0]) if not start_val.empty else current_stock
         sold = elapsed_sales.get(p_name, 0)
         
-        # ★ 修正：0除算を防ぐ安全な分岐処理を適用
         if elapsed_weight > 0:
             future_sales_est = int((sold / elapsed_weight) * (total_weight - elapsed_weight))
             estimated_total_sales = (sold / elapsed_weight) * total_weight
